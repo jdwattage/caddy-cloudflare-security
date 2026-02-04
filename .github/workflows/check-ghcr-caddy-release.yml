@@ -1,0 +1,83 @@
+name: Check GHCR Caddy Releases and Trigger Build
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  check_and_trigger:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - name: Get latest Caddy release tag
+        id: caddy_release
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const release = await github.rest.repos.getLatestRelease({
+              owner: 'caddyserver',
+              repo: 'caddy'
+            });
+            const tag = release.data.tag_name;
+            core.setOutput('tag', tag);
+            console.log(`Latest Caddy release: ${tag}`);
+
+      - name: Check if GHCR image exists for this tag
+        id: ghcr_check
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Set these to your org/user and package name
+            const org = 'watts-one';
+            const packageName = 'caddy-cloudflare-security';
+            const tag = '${{ steps.caddy_release.outputs.tag }}'.replace(/^v/, ''); // Remove 'v' if needed
+
+            // List all versions of the GHCR package
+            const versions = await github.paginate(
+              github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
+              {
+                package_type: 'container',
+                package_name: packageName,
+                org: org,
+                per_page: 100
+              }
+            );
+
+            // Find if any version has the tag
+            let found = false;
+            for (const version of versions) {
+              const tags = version.metadata?.container?.tags || [];
+              if (tags.includes(tag)) {
+                found = true;
+                break;
+              }
+            }
+            core.setOutput('exists', found ? 'true' : 'false');
+            console.log(`GHCR image for tag ${tag} exists: ${found}`);
+
+      - name: Trigger Build Workflow if Needed
+        if: steps.ghcr_check.outputs.exists != 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const version = '${{ steps.caddy_release.outputs.tag }}';
+            console.log(`Build required for Caddy version: ${version}. Dispatching event...`);
+            await github.rest.repos.createDispatchEvent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              event_type: 'caddy-release',
+              client_payload: {
+                caddy_version: version
+              }
+            });
+            console.log(`Successfully dispatched event for ${version}.`);
