@@ -37,7 +37,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             // Set these to your org/user and package name
-            const org = 'watts-one';
+            const org = 'jdwattage';
             const packageName = 'caddy-cloudflare-security';
             const tag = '${{ steps.caddy_release.outputs.tag }}'.replace(/^v/, ''); // Remove 'v' if needed
 
