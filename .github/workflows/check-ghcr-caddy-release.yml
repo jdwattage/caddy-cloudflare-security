@@ -29,40 +29,50 @@ jobs:
             const tag = release.data.tag_name;
             core.setOutput('tag', tag);
             console.log(`Latest Caddy release: ${tag}`);
-
+            
       - name: Check if GHCR image exists for this tag
         id: ghcr_check
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            // Set these to your org/user and package name
-            const org = 'jdwattage';
-            const packageName = 'caddy-cloudflare-security';
-            const tag = '${{ steps.caddy_release.outputs.tag }}'.replace(/^v/, ''); // Remove 'v' if needed
-
-            // List all versions of the GHCR package
-            const versions = await github.paginate(
-              github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
-              {
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = '${{ steps.caddy_release.outputs.tag }}';
+            // GHCR package name is repo name, type is 'container'
+            try {
+              // List package versions (tags)
+              const versions = await github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg({
                 package_type: 'container',
-                package_name: packageName,
-                org: org,
+                package_name: repo,
+                org: owner,
                 per_page: 100
-              }
-            );
-
-            // Find if any version has the tag
-            let found = false;
-            for (const version of versions) {
-              const tags = version.metadata?.container?.tags || [];
-              if (tags.includes(tag)) {
-                found = true;
-                break;
+              });
+              const found = versions.data.some(v => v.metadata.container.tags.includes(tag));
+              core.setOutput('exists', found ? 'true' : 'false');
+              console.log(`GHCR image for tag ${tag} exists: ${found}`);
+            } catch (e) {
+              // fallback for user-owned repos
+              if (e.status === 404) {
+                try {
+                  const versions = await github.rest.packages.getAllPackageVersionsForPackageOwnedByUser({
+                    package_type: 'container',
+                    package_name: repo,
+                    username: owner,
+                    per_page: 100
+                  });
+                  const found = versions.data.some(v => v.metadata.container.tags.includes(tag));
+                  core.setOutput('exists', found ? 'true' : 'false');
+                  console.log(`GHCR image for tag ${tag} exists: ${found}`);
+                } catch (err) {
+                  core.setOutput('exists', 'false');
+                  console.log(`Could not find GHCR image for tag ${tag}: ${err.message}`);
+                }
+              } else {
+                core.setOutput('exists', 'false');
+                console.log(`Could not find GHCR image for tag ${tag}: ${e.message}`);
               }
             }
-            core.setOutput('exists', found ? 'true' : 'false');
-            console.log(`GHCR image for tag ${tag} exists: ${found}`);
 
       - name: Trigger Build Workflow if Needed
         if: steps.ghcr_check.outputs.exists != 'true'
